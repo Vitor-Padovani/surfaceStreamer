@@ -151,6 +151,8 @@ int SendImagePlane(igtl::Socket::Pointer& socket, int frameIndex)
     igtl::ImageMessage::Pointer imageMsg;
     imageMsg = igtl::ImageMessage::New();
 
+    imageMsg->SetEndian(2);
+
     // Set device name
     imageMsg->SetDeviceName("Wave Coordinates");
 
@@ -259,11 +261,11 @@ int LoopFunction() {
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
 
-            //igtl::Sleep(50);
-            std::this_thread::sleep_for(std::chrono::milliseconds(FRAME_INTERVAL_MS));
-
             double fps = 1.0 / elapsed.count();
             std::cout << "FPS: " << fps << std::endl;
+
+            //igtl::Sleep(50);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
     else
