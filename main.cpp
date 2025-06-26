@@ -9,17 +9,21 @@
 #include "igtlOSUtil.h"
 #include "igtlMessageHeader.h"
 #include "igtlServerSocket.h"
-#include "igtlPointMessage.h"
+#include "igtlPolyDataMessage.h"
 
 const double M_PI = 3.1415926535;
 
-const int PLANE_WIDTH = 50;
-const int PLANE_HEIGHT = 50;
+const int PLANE_WIDTH = 100;
+const int PLANE_HEIGHT = 100;
 
 std::atomic_bool StopFlag = false;
 
 // Vectors para armazenar todos os frames pré-calculados
 std::vector<std::vector<std::vector<float>>> preCalculatedFrames;
+std::vector<igtl::PolyDataPointArray::Pointer> preCalculatedPointArrays;
+
+// Pre-calculated lines (grid topology doesn't change)
+igtl::PolyDataCellArray::Pointer preCalculatedLines;
 
 // Criar e configurar timestamp
 igtl::TimeStamp::Pointer timeStamp = igtl::TimeStamp::New();
@@ -79,6 +83,37 @@ std::vector<std::vector<float>> ApplyWaveEffect(
     return wavePoints;
 }
 
+// Função que pré-calcula as linhas da grade (chamada apenas uma vez)
+void PreCalculateLines(int width, int height) {
+    std::cout << "Pre-calculating grid lines..." << std::endl;
+
+    preCalculatedLines = igtl::PolyDataCellArray::New();
+
+    // Add horizontal lines
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width - 1; j++) {
+            igtlUint32 lineData[2] = {
+                static_cast<igtlUint32>(i * width + j),
+                static_cast<igtlUint32>(i * width + j + 1)
+            };
+            preCalculatedLines->AddCell(2, lineData);
+        }
+    }
+
+    // Add vertical lines
+    for (int i = 0; i < height - 1; i++) {
+        for (int j = 0; j < width; j++) {
+            igtlUint32 lineData[2] = {
+                static_cast<igtlUint32>(i * width + j),
+                static_cast<igtlUint32>((i + 1) * width + j)
+            };
+            preCalculatedLines->AddCell(2, lineData);
+        }
+    }
+
+    std::cout << "Grid lines pre-calculation completed!" << std::endl;
+}
+
 // Função que pré-calcula todos os frames do wave effect
 void PreCalculateWaveFrames(int width, int height, int numFrames, float frameRate = 30.0f)
 {
@@ -86,7 +121,9 @@ void PreCalculateWaveFrames(int width, int height, int numFrames, float frameRat
 
     // Limpar frames anteriores
     preCalculatedFrames.clear();
+    preCalculatedPointArrays.clear();
     preCalculatedFrames.reserve(numFrames);
+    preCalculatedPointArrays.reserve(numFrames);
 
     // Gerar plano base
     std::vector<std::vector<float>> basePlanePoints = GeneratePlanePoints(width, height, 2.0f, 0.0f);
@@ -107,8 +144,23 @@ void PreCalculateWaveFrames(int width, int height, int numFrames, float frameRat
             3.0f    // wave speed
         );
 
-        // Armazenar frame
+        // Criar pointArray pré-calculado para este frame
+        igtl::PolyDataPointArray::Pointer pointArray = igtl::PolyDataPointArray::New();
+
+        int numPoints = framePoints.size();
+        for (int i = 0; i < numPoints; i++)
+        {
+            igtlFloat32 point[3] = {
+                static_cast<igtlFloat32>(framePoints[i][0]),
+                static_cast<igtlFloat32>(framePoints[i][1]),
+                static_cast<igtlFloat32>(framePoints[i][2])
+            };
+            pointArray->AddPoint(point);
+        }
+
+        // Armazenar ambos
         preCalculatedFrames.push_back(framePoints);
+        preCalculatedPointArrays.push_back(pointArray);
 
         // Mostrar progresso
         if (frame % (numFrames / 10) == 0)
@@ -120,52 +172,79 @@ void PreCalculateWaveFrames(int width, int height, int numFrames, float frameRat
     std::cout << "Pre-calculation completed!" << std::endl;
 }
 
-int SendPointsPlane(igtl::Socket::Pointer& socket, int frameIndex)
+int SendPolyDataPlane(igtl::Socket::Pointer& socket, int frameIndex)
 {
     // Verificar se o frame existe
-    if (frameIndex >= preCalculatedFrames.size())
+    if (frameIndex >= preCalculatedPointArrays.size())
     {
         std::cerr << "Frame index out of bounds!" << std::endl;
         return 0;
     }
 
-    // Allocate Point Message Class
-    igtl::PointMessage::Pointer pointMsg;
-    pointMsg = igtl::PointMessage::New();
+    // Allocate PolyData Message Class
+    igtl::PolyDataMessage::Pointer polyDataMsg;
+    polyDataMsg = igtl::PolyDataMessage::New();
 
     // Set device name
-    pointMsg->SetDeviceName("Wave Points");
+    polyDataMsg->SetDeviceName("Wave Plane");
 
-    // Get current frame points
-    const std::vector<std::vector<float>>& framePoints = preCalculatedFrames[frameIndex];
+    // Usar pointArray pré-calculado (muito mais rápido!)
+    polyDataMsg->SetPoints(preCalculatedPointArrays[frameIndex]);
 
-    // Add all points to the message
-    for (size_t i = 0; i < framePoints.size(); i++)
-    {
-        igtl::PointElement::Pointer pointElement = igtl::PointElement::New();
-        pointElement->SetName("Point");
-        pointElement->SetGroupName("WavePlane");
-        pointElement->SetRGBA(0xFF, 0xFF, 0xFF, 0xFF); // White color
-        pointElement->SetPosition(
-            framePoints[i][0],
-            framePoints[i][1],
-            framePoints[i][2]
-        );
-        pointElement->SetRadius(1.0);
-        pointMsg->AddPointElement(pointElement);
-    }
+    // Usar lines pré-calculadas (muito mais rápido!)
+    polyDataMsg->SetLines(preCalculatedLines);
 
     timeStamp->GetTime();  // Pega tempo atual
 
     // Atribuir à mensagem
-    pointMsg->SetTimeStamp(timeStamp);
+    polyDataMsg->SetTimeStamp(timeStamp);
 
-    // Pack pointMsg and send via OpenIGTLink socket
-    pointMsg->Pack();
+    // Pack polyDataMsg and send via OpenIGTLink socket
+    polyDataMsg->Pack();
 
-    socket->Send(pointMsg->GetPackPointer(), pointMsg->GetPackSize());
-    //std::cout << "Wave points frame " << frameIndex << " sent" << std::endl;
+    socket->Send(polyDataMsg->GetPackPointer(), polyDataMsg->GetPackSize());
+    //std::cout << "Wave plane frame " << frameIndex << " sent" << std::endl;
 
+    return 1;
+}
+
+int SendPolyData(igtl::Socket::Pointer& socket)
+{
+    // Allocate Status Message Class
+    igtl::PolyDataMessage::Pointer polyDataMsg;
+    polyDataMsg = igtl::PolyDataMessage::New();
+    // NOTE: the server should send a message with the same device name
+    // as the received query message. 
+    polyDataMsg->SetDeviceName("Fake Shapes");
+    // Define points connected by line
+    igtlFloat32 pointsData[10][3];
+    for (int i = 0; i < 10; i++) {
+        pointsData[i][0] = i * 10;
+        pointsData[i][1] = i * 10;
+        pointsData[i][2] = i * 10;
+    }
+    // Create point array
+    igtl::PolyDataPointArray::Pointer pointArray;
+    pointArray = igtl::PolyDataPointArray::New();
+    // Add point data to point array
+    for (unsigned int i = 0; i < 10; i++)
+    {
+        pointArray->AddPoint(pointsData[i]);
+    }
+    // Add pointArray to PolyDataMessage
+    polyDataMsg->SetPoints(pointArray);
+    // Add lines
+    static igtlUint32 lineData[10] = { 0,1,2,3,4,5,6,7,8,9 }; // equivalent to SetId with vtk's PolyLine
+    // Create PolyDataCellArray and add lines
+    igtl::PolyDataCellArray::Pointer cellArray;
+    cellArray = igtl::PolyDataCellArray::New();
+    cellArray->AddCell(10, lineData);
+    // Add PolyDataCellArray to PolyDataMessage
+    polyDataMsg->SetLines(cellArray);
+    // Pack polyDataMsg and send via OpenIGTLink socket
+    polyDataMsg->Pack();
+    socket->Send(polyDataMsg->GetPackPointer(), polyDataMsg->GetPackSize());
+    std::cout << "Message sent" << std::endl;
     return 1;
 }
 
@@ -174,6 +253,9 @@ int LoopFunction() {
     const int NUM_FRAMES = 300;  // 10 segundos a 30 FPS
     const float FRAME_RATE = 60.0f;
     const int FRAME_INTERVAL_MS = static_cast<int>(1000.0f / FRAME_RATE);
+
+    // Pré-calcular as linhas da grade (apenas uma vez)
+    PreCalculateLines(PLANE_WIDTH, PLANE_HEIGHT);
 
     // Pré-calcular todos os frames
     PreCalculateWaveFrames(PLANE_WIDTH, PLANE_HEIGHT, NUM_FRAMES, FRAME_RATE);
@@ -201,7 +283,7 @@ int LoopFunction() {
             auto start = std::chrono::high_resolution_clock::now();
 
             // Enviar frame atual
-            SendPointsPlane(socket, currentFrame);
+            SendPolyDataPlane(socket, currentFrame);
 
             // Avançar para próximo frame (loop cíclico)
             currentFrame = (currentFrame + 1) % NUM_FRAMES;
