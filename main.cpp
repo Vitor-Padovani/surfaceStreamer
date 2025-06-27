@@ -13,8 +13,8 @@
 
 const double M_PI = 3.1415926535;
 
-const int PLANE_WIDTH = 100;
-const int PLANE_HEIGHT = 100;
+const int PLANE_WIDTH = 300;
+const int PLANE_HEIGHT = 300;
 
 std::atomic_bool StopFlag = false;
 
@@ -41,7 +41,7 @@ void CalculateImageDimensions(int totalPoints)
 
 // Função que gera um plano de pontos
 std::vector<std::vector<float>> GeneratePlanePoints(
-    int width, int height, float spacing = 10.0f, float z_level = 0.0f, float offset = -100.0f)
+    int width, int height, float spacing = 1.0f, float z_level = 0.0f, float offset = -100.0f)
 {
     std::vector<std::vector<float>> points;
 
@@ -120,8 +120,8 @@ void PreCalculateWaveFrames(int width, int height, int numFrames, float frameRat
             width,
             height,
             time,
-            60.0f,  // amplitude
-            0.3f,  // frequency
+            75.0f,  // amplitude
+            1.0f,  // frequency
             3.0f    // wave speed
         );
 
@@ -223,7 +223,7 @@ int SendImagePlane(igtl::Socket::Pointer& socket, int frameIndex)
 
 int LoopFunction() {
     // Configurações da animação
-    const int NUM_FRAMES = 300;  // 10 segundos a 30 FPS
+    const int NUM_FRAMES = 60;  // 10 segundos a 30 FPS
     const float FRAME_RATE = 60.0f;
     const int FRAME_INTERVAL_MS = static_cast<int>(1000.0f / FRAME_RATE);
 
@@ -265,7 +265,7 @@ int LoopFunction() {
             std::cout << "FPS: " << fps << std::endl;
 
             //igtl::Sleep(50);
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(FRAME_INTERVAL_MS));
         }
     }
     else
